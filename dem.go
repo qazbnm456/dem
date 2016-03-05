@@ -39,6 +39,14 @@ func main() {
 			},
 		},
 		{
+			Name:  "use",
+			Usage: "dem use [<imgset name>]",
+			Action: func(c *cli.Context) {
+				setGlobalVars(c)
+				use(c.Args().First())
+			},
+		},
+		{
 			Name:  "list",
 			Usage: "dem list",
 			Action: func(c *cli.Context) {
