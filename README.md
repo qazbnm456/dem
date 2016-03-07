@@ -9,6 +9,7 @@ This tool is still under heavy development.
 ## Installation
 1. Clone this repo.
 2. go install.
+3. Run it with root privilege
 
 **Currently only support Ubuntu/Debian**
 
@@ -25,4 +26,3 @@ Now in any new shell use the installed imgset:
 If you want to see what imgsets are installed:
 
     dem list
-
