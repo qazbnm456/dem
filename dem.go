@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"github.com/codegangsta/cli"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 // Global Vars
 var demDir string
 var debug bool
+var systemDir string = "/var/lib/docker"
 
 func main() {
 	app := cli.NewApp()
@@ -51,6 +54,7 @@ func main() {
 			Usage: "dem list",
 			Action: func(c *cli.Context) {
 				setGlobalVars(c)
+				setDockerSystemPath()
 				list()
 			},
 		},
@@ -85,6 +89,19 @@ func remove(imgset string) {
 	if imgset == "" {
 		die("The remove command requires that a imgset name is specified.", nil, 127)
 	}
+	if currentImgset := getCurrentImgset(); currentImgset == imgset {
+		die("Cannot remove current imgset.", nil, 127)
+	}
+	imgsetPath := getImgsetPath(imgset)
+	if _, err := os.Stat(imgsetPath); os.IsNotExist(err) {
+		Warn("%s is not installed.", imgset)
+		return
+	}
+	err := os.RemoveAll(imgsetPath)
+	if err != nil {
+		die("Unable to remove Imgset %s located in %s.", err, 2, imgset, imgsetPath)
+	}
+	Success("Remove Imgset %s successfully.", imgset)
 }
 
 func use(imgset string) {
@@ -95,19 +112,22 @@ func use(imgset string) {
 	ensureImgsetCreated(imgsetPath)
 	reset()
 	installSetting(imgsetPath)
+	makeItCurrent(imgsetPath)
 
 	Info("Now using imgset %s", imgset)
 }
 
 func list() {
 	results := getInstalledImgset()
-	current := "test"
+	current := getCurrentImgset()
 
 	for _, result := range results {
 		if current == result {
 			Success("->\t%s", result)
 		} else {
-			Info("\t%s", result)
+			if result != "current" {
+				Info("\t%s", result)
+			}
 		}
 	}
 }
@@ -124,6 +144,30 @@ func getInstalledImgset() []string {
 
 	sort.Strings(results)
 	return results
+}
+
+func getCurrentImgset() string {
+	currentPath := getImgsetPath("current")
+	cmd := exec.Command("readlink", currentPath)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		die("Error: %s.", err, 2)
+	}
+	if err := cmd.Start(); err != nil {
+		die("Error: %s.", err, 2)
+	}
+	outC := make(chan string)
+	// copy the output in a separate goroutine so printing can't block indefinitely
+	go func() {
+		var buf bytes.Buffer
+		io.Copy(&buf, stdout)
+		outC <- buf.String()
+	}()
+	current := filepath.Base(<-outC)
+	current = strings.TrimSpace(current)
+
+	Debug("current imgset: %s", current)
+	return current
 }
 
 func changeDockerDefault(setting, imgsetPath string) {
@@ -166,6 +210,26 @@ func installSetting(imgsetPath string) {
 	Debug("Restarting docker service")
 }
 
+func makeItCurrent(imgsetPath string) {
+	currentPath := getImgsetPath("current")
+	cmd := exec.Command("ln", "-sfn", imgsetPath, currentPath)
+	err := cmd.Run()
+	if err != nil {
+		die("Error: %s.", err, 2)
+	}
+	Debug("Making %s to current", imgsetPath)
+}
+
 func getDockerDefault() string {
 	return "/etc/default/docker"
+}
+
+func setDockerSystemPath() {
+	systemPath := getImgsetPath("system")
+	cmd := exec.Command("ln", "-sfn", systemDir, systemPath)
+	err := cmd.Run()
+	if err != nil {
+		die("Error: %s.", err, 2)
+	}
+	Debug("Making %s to system", systemDir)
 }
