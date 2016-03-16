@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -64,11 +65,40 @@ func main() {
 }
 
 func setGlobalVars(c *cli.Context) {
+	usr, _ := user.Current()
+	dir := usr.HomeDir
 	demDir = c.GlobalString("demDir")
 	debug = c.GlobalBool("debug")
 
-	if demDir == "" {
-		demDir = "/var/lib/dem"
+	demSettings := []string{dir, ".dem"}
+	if _, err := os.Stat(strings.Join(demSettings, "/")); os.IsNotExist(err) {
+		Warn("\"/.dem\" is not found.")
+		if demDir == "" {
+			demDir = "/var/lib/dem"
+		}
+		cmd := exec.Command("echo", demDir, "|", "tee", strings.Join(demSettings, "/"))
+		err = cmd.Run()
+		if err != nil {
+			die("Error: %s.", err, 1)
+		}
+	} else {
+		cmd := exec.Command("cat", strings.Join(demSettings, "/"))
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			die("Error: %s.", err, 2)
+		}
+		if err = cmd.Start(); err != nil {
+			die("Error: %s.", err, 2)
+		}
+		outC := make(chan string)
+		// copy the output in a separate goroutine so printing can't block indefinitely
+		go func() {
+			var buf bytes.Buffer
+			io.Copy(&buf, stdout)
+			outC <- buf.String()
+		}()
+		temp_demDir := filepath.Base(<-outC)
+		demDir = strings.TrimSpace(temp_demDir)
 	}
 }
 
@@ -110,7 +140,7 @@ func use(imgset string) {
 	}
 	imgsetPath := getImgsetPath(imgset)
 	ensureImgsetCreated(imgsetPath)
-	reset()
+	reset(getDockerDefault())
 	installSetting(imgsetPath)
 	makeItCurrent(imgsetPath)
 
@@ -171,6 +201,7 @@ func getCurrentImgset() string {
 }
 
 func changeDockerDefault(setting, imgsetPath string) {
+	set(setting)
 	fs := []string{"s@#DOCKER_OPTS=\"@DOCKER_OPTS=\"-g", imgsetPath, "@"}
 
 	cmd := exec.Command("sed", "-i", strings.Join(fs, "\\ "), setting)
@@ -194,8 +225,24 @@ func ensureImgsetCreated(imgsetPath string) {
 	}
 }
 
-func reset() {
-	Debug("here is reset function")
+func set(setting string) {
+	backupName := []string{setting, ".bak"}
+	cmd := exec.Command("cp", setting, strings.Join(backupName, ""))
+	err := cmd.Run()
+	if err != nil {
+		die("Error: %s.", err, 1)
+	}
+	Debug("Copying %s to %s", setting, strings.Join(backupName, ""))
+}
+
+func reset(setting string) {
+	backupName := []string{setting, ".bak"}
+	cmd := exec.Command("mv", "-f", strings.Join(backupName, ""), setting)
+	err := cmd.Run()
+	if err != nil {
+		die("Error: %s.", err, 1)
+	}
+	Debug("Resstore %s to %s", strings.Join(backupName, ""), setting)
 }
 
 func installSetting(imgsetPath string) {
